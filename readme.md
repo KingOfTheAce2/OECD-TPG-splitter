@@ -46,11 +46,16 @@ You can also manually trigger the extraction:
 After processing, you'll find:
 
 ```
-extracted_paragraphs/
+extracted_chapters/
 ├── your-pdf-name/
-│   ├── paragraph_1_1.json
-│   ├── paragraph_1_2.json
-│   ├── paragraph_10_19.json
+│   ├── preface.json                    ← Preface paragraphs
+│   ├── chapter_1.json                  ← Chapter I paragraphs  
+│   ├── chapter_2.json                  ← Chapter II paragraphs
+│   ├── chapter_10.json                 ← Chapter X paragraphs
+│   ├── annex_general.json              ← General annex
+│   ├── annex_i_to_chapter_2.json       ← Annex I to Chapter II
+│   ├── annex_ii_to_chapter_2.json      ← Annex II to Chapter II
+│   ├── annex_to_chapter_3.json         ← Annex to Chapter III
 │   ├── ...
 │   └── extraction_summary.json
 └── extraction_report.md
@@ -64,10 +69,21 @@ extracted_paragraphs/
 - **Python 3.11**: Runtime environment
 
 ### Paragraph Detection
-The extractor uses regex patterns to identify numbered paragraphs in formats like:
-- `1.1` Simple numbering
-- `10.19` Chapter.paragraph
-- `1.38.2` Multi-level numbering
+The extractor uses multiple regex patterns to identify:
+
+**Regular Chapters:**
+- `1.1`, `2.5`, `10.19` - Standard chapter paragraphs
+
+**Annexes:**  
+- `A.1`, `B.2` - Annex paragraphs with letter numbering
+- `I.1`, `II.3` - Annex paragraphs with Roman numerals
+- Automatically detects annex relationships to chapters
+
+**Section Recognition:**
+- `PREFACE` - Introduction content
+- `CHAPTER I`, `CHAPTER X` - Individual chapters  
+- `ANNEX TO CHAPTER III` - Chapter-specific annexes
+- `ANNEX I TO CHAPTER II` - Numbered annexes to chapters
 
 ### Text Cleaning
 The extracted text is automatically cleaned by:
