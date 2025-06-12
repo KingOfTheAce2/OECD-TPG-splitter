@@ -15,9 +15,15 @@ from typing import List, Dict, Optional
 
 class TPGParagraphExtractor:
     def __init__(self):
+        # Simplified pattern for paragraphs like 1.1, 10.19, etc. (no sub-paragraphs)
         self.paragraph_pattern = re.compile(
-            r'(\d+\.\d+(?:\.\d+)*)\s*\.?\s*(.*?)(?=\d+\.\d+(?:\.\d+)*\s*\.?\s*|$)', 
+            r'(\d+\.\d+)\s*\.?\s*(.*?)(?=\d+\.\d+\s*\.?\s*|$)', 
             re.DOTALL | re.MULTILINE
+        )
+        # Pattern to detect chapter titles and preface
+        self.chapter_pattern = re.compile(
+            r'(CHAPTER\s+[IVX]+|PREFACE|INTRODUCTION)\s*[:\-]?\s*(.*?)(?=CHAPTER\s+[IVX]+|$)',
+            re.DOTALL | re.MULTILINE | re.IGNORECASE
         )
         
     def clean_text(self, text: str) -> str:
@@ -78,9 +84,9 @@ class TPGParagraphExtractor:
         
         return text
 
-    def extract_paragraphs(self, text: str) -> List[Dict]:
-        """Extract numbered paragraphs from text"""
-        paragraphs = []
+    def extract_paragraphs(self, text: str) -> Dict[str, List[Dict]]:
+        """Extract numbered paragraphs from text and group by chapter"""
+        chapters = {}
         
         # Find all paragraph matches
         matches = self.paragraph_pattern.findall(text)
@@ -95,6 +101,19 @@ class TPGParagraphExtractor:
             if len(content.strip()) < 20:
                 continue
             
+            # Determine chapter from paragraph ID
+            chapter_num = paragraph_id.split('.')[0]
+            
+            # Handle special cases
+            if chapter_num == "0" or paragraph_id.startswith("0."):
+                chapter_key = "preface"
+            else:
+                chapter_key = f"chapter_{chapter_num}"
+            
+            # Initialize chapter if not exists
+            if chapter_key not in chapters:
+                chapters[chapter_key] = []
+            
             # Create paragraph object
             paragraph = {
                 "id": paragraph_id.strip(),
@@ -103,27 +122,41 @@ class TPGParagraphExtractor:
                 "explanation": ""  # To be added manually
             }
             
-            paragraphs.append(paragraph)
+            chapters[chapter_key].append(paragraph)
         
-        return paragraphs
+        return chapters
 
-    def save_paragraphs_as_json(self, paragraphs: List[Dict], output_dir: str):
-        """Save each paragraph as a separate JSON file"""
+    def save_chapters_as_json(self, chapters: Dict[str, List[Dict]], output_dir: str):
+        """Save each chapter as a separate JSON file"""
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
         
-        for paragraph in paragraphs:
-            # Create filename from paragraph ID (replace dots with underscores)
-            filename = f"paragraph_{paragraph['id'].replace('.', '_')}.json"
+        total_paragraphs = 0
+        chapter_summary = {}
+        
+        for chapter_key, paragraphs in chapters.items():
+            # Create filename for chapter
+            filename = f"{chapter_key}.json"
             file_path = output_path / filename
+            
+            # Create chapter object
+            chapter_data = {
+                "chapter": chapter_key,
+                "total_paragraphs": len(paragraphs),
+                "paragraphs": paragraphs
+            }
             
             # Save as formatted JSON
             with open(file_path, 'w', encoding='utf-8') as f:
-                json.dump(paragraph, f, indent=2, ensure_ascii=False)
+                json.dump(chapter_data, f, indent=2, ensure_ascii=False)
+            
+            total_paragraphs += len(paragraphs)
+            chapter_summary[chapter_key] = len(paragraphs)
+            print(f"Saved {len(paragraphs)} paragraphs to {filename}")
         
-        print(f"Saved {len(paragraphs)} paragraphs to {output_dir}")
+        return total_paragraphs, chapter_summary
 
-    def process_pdf(self, pdf_path: str, output_dir: str = "extracted_paragraphs"):
+    def process_pdf(self, pdf_path: str, output_dir: str = "extracted_chapters"):
         """Main processing function"""
         print(f"Processing PDF: {pdf_path}")
         
@@ -131,32 +164,38 @@ class TPGParagraphExtractor:
         text = self.extract_text_from_pdf(pdf_path)
         print(f"Extracted {len(text)} characters from PDF")
         
-        # Extract paragraphs
-        paragraphs = self.extract_paragraphs(text)
-        print(f"Found {len(paragraphs)} paragraphs")
+        # Extract paragraphs grouped by chapter
+        chapters = self.extract_paragraphs(text)
+        total_paragraphs = sum(len(paragraphs) for paragraphs in chapters.values())
+        print(f"Found {total_paragraphs} paragraphs across {len(chapters)} chapters")
         
-        if paragraphs:
-            # Save paragraphs as individual JSON files
-            self.save_paragraphs_as_json(paragraphs, output_dir)
+        if chapters:
+            # Save chapters as individual JSON files
+            total_saved, chapter_summary = self.save_chapters_as_json(chapters, output_dir)
             
             # Also save a summary file
             summary = {
                 "source_file": os.path.basename(pdf_path),
-                "total_paragraphs": len(paragraphs),
-                "paragraph_ids": [p["id"] for p in paragraphs]
+                "total_chapters": len(chapters),
+                "total_paragraphs": total_saved,
+                "chapters": chapter_summary,
+                "chapter_files": [f"{chapter}.json" for chapter in chapters.keys()]
             }
             
             with open(Path(output_dir) / "extraction_summary.json", 'w') as f:
                 json.dump(summary, f, indent=2)
             
             print("Extraction completed successfully!")
+            print(f"Created {len(chapters)} chapter files:")
+            for chapter in chapters.keys():
+                print(f"  - {chapter}.json")
         else:
             print("No paragraphs found. Check the PDF format and paragraph numbering.")
 
 def main():
     parser = argparse.ArgumentParser(description='Extract OECD TPG paragraphs from PDF')
     parser.add_argument('pdf_path', help='Path to the PDF file')
-    parser.add_argument('--output', '-o', default='extracted_paragraphs', 
+    parser.add_argument('--output', '-o', default='extracted_chapters', 
                        help='Output directory for JSON files')
     
     args = parser.parse_args()
