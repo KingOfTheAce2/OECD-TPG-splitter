@@ -12,7 +12,7 @@ on:
       pdf_path:
         description: 'Path to PDF file in repository'
         required: true
-        default: 'oecd-tpg.pdf'
+        default: '2022_OECD_TPG_EN.pdf'
 
 jobs:
   extract-paragraphs:
