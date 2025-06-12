@@ -12,7 +12,7 @@ on:
       pdf_path:
         description: 'Path to PDF file in repository'
         required: true
-        default: '2022_OECD_TPG_EN.pdf'
+        default: 'oecd-tpg.pdf'
 
 jobs:
   extract-paragraphs:
@@ -23,6 +23,7 @@ jobs:
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Set up Python
       uses: actions/setup-python@v4
@@ -33,6 +34,20 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
+    
+    - name: Verify files exist
+      run: |
+        echo "Checking for required files..."
+        ls -la
+        if [ ! -f "extract_paragraphs.py" ]; then
+          echo "Error: extract_paragraphs.py not found!"
+          exit 1
+        fi
+        if [ ! -f "requirements.txt" ]; then
+          echo "Error: requirements.txt not found!"
+          exit 1
+        fi
+        echo "All required files found."
     
     - name: Find PDF files
       id: find-pdfs
@@ -62,7 +77,7 @@ jobs:
           if [ -f "$pdf_file" ]; then
             echo "Processing: $pdf_file"
             # Create output directory based on PDF filename
-            output_dir="extracted_paragraphs/$(basename "$pdf_file" .pdf)"
+            output_dir="extracted_chapters/$(basename "$pdf_file" .pdf)"
             python extract_paragraphs.py "$pdf_file" --output "$output_dir"
           else
             echo "Warning: PDF file not found: $pdf_file"
@@ -77,28 +92,26 @@ jobs:
         echo "**Trigger:** ${{ github.event_name }}" >> extraction_report.md
         echo "" >> extraction_report.md
         
-        if [ -d "extracted_paragraphs" ]; then
+        if [ -d "extracted_chapters" ]; then
           echo "## Extracted Files" >> extraction_report.md
           echo "" >> extraction_report.md
           
-          for summary_file in extracted_paragraphs/*/extraction_summary.json; do
+          for summary_file in extracted_chapters/*/extraction_summary.json; do
             if [ -f "$summary_file" ]; then
               source_file=$(jq -r '.source_file' "$summary_file")
+              total_chapters=$(jq -r '.total_chapters' "$summary_file")
               total_paragraphs=$(jq -r '.total_paragraphs' "$summary_file")
-              echo "- **$source_file**: $total_paragraphs paragraphs extracted" >> extraction_report.md
+              echo "- **$source_file**: $total_chapters chapters, $total_paragraphs paragraphs extracted" >> extraction_report.md
             fi
           done
           
           echo "" >> extraction_report.md
-          echo "## Directory Structure" >> extraction_report.md
+          echo "## Chapter Files" >> extraction_report.md
           echo '```' >> extraction_report.md
-          find extracted_paragraphs -type f -name "*.json" | head -20 >> extraction_report.md
-          if [ $(find extracted_paragraphs -type f -name "*.json" | wc -l) -gt 20 ]; then
-            echo "... and more files" >> extraction_report.md
-          fi
+          find extracted_chapters -name "chapter_*.json" -o -name "preface.json" | sort >> extraction_report.md
           echo '```' >> extraction_report.md
         else
-          echo "No paragraphs were extracted." >> extraction_report.md
+          echo "No chapters were extracted." >> extraction_report.md
         fi
     
     - name: Upload extraction results
@@ -107,31 +120,28 @@ jobs:
       with:
         name: oecd-tpg-paragraphs-${{ github.run_number }}
         path: |
-          extracted_paragraphs/
+          extracted_chapters/
           extraction_report.md
         retention-days: 90
     
     - name: Commit extracted paragraphs
       if: github.event_name != 'pull_request'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         
-        if [ -d "extracted_paragraphs" ]; then
-          git add extracted_paragraphs/
+        if [ -d "extracted_chapters" ]; then
+          git add extracted_chapters/
           git add extraction_report.md
           
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "Auto-extract OECD TPG paragraphs from PDF(s)
-            
-            - Processed: ${{ steps.find-pdfs.outputs.pdf_files }}
-            - Generated individual JSON files for each paragraph
-            - Ready for manual title and explanation addition"
-            
-            git push
-            echo "Committed extracted paragraphs to repository"
+            echo "Changes detected, but auto-commit is disabled for security."
+            echo "Please download the artifacts and commit manually if needed."
+            echo "Extracted paragraphs are available in the workflow artifacts."
           fi
         fi
     
