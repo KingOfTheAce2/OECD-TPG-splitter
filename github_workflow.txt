@@ -1,0 +1,154 @@
+name: Extract OECD TPG Paragraphs
+
+on:
+  push:
+    paths:
+      - '**/*.pdf'
+  pull_request:
+    paths:
+      - '**/*.pdf'
+  workflow_dispatch:
+    inputs:
+      pdf_path:
+        description: 'Path to PDF file in repository'
+        required: true
+        default: 'oecd-tpg.pdf'
+
+jobs:
+  extract-paragraphs:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Find PDF files
+      id: find-pdfs
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "pdf_files=${{ github.event.inputs.pdf_path }}" >> $GITHUB_OUTPUT
+        else
+          # Find all PDF files that were added or modified
+          pdf_files=$(git diff --name-only ${{ github.event.before }}..${{ github.sha }} | grep -E '\.pdf$' | tr '\n' ' ')
+          if [ -z "$pdf_files" ]; then
+            # If no PDFs in diff, look for any PDF files in repo
+            pdf_files=$(find . -name "*.pdf" -type f | head -5 | tr '\n' ' ')
+          fi
+          echo "pdf_files=$pdf_files" >> $GITHUB_OUTPUT
+        fi
+        echo "Found PDF files: $pdf_files"
+    
+    - name: Extract paragraphs from PDFs
+      run: |
+        pdf_files="${{ steps.find-pdfs.outputs.pdf_files }}"
+        if [ -z "$pdf_files" ]; then
+          echo "No PDF files found to process"
+          exit 0
+        fi
+        
+        for pdf_file in $pdf_files; do
+          if [ -f "$pdf_file" ]; then
+            echo "Processing: $pdf_file"
+            # Create output directory based on PDF filename
+            output_dir="extracted_paragraphs/$(basename "$pdf_file" .pdf)"
+            python extract_paragraphs.py "$pdf_file" --output "$output_dir"
+          else
+            echo "Warning: PDF file not found: $pdf_file"
+          fi
+        done
+    
+    - name: Create extraction report
+      run: |
+        echo "# OECD TPG Paragraph Extraction Report" > extraction_report.md
+        echo "" >> extraction_report.md
+        echo "**Date:** $(date)" >> extraction_report.md
+        echo "**Trigger:** ${{ github.event_name }}" >> extraction_report.md
+        echo "" >> extraction_report.md
+        
+        if [ -d "extracted_paragraphs" ]; then
+          echo "## Extracted Files" >> extraction_report.md
+          echo "" >> extraction_report.md
+          
+          for summary_file in extracted_paragraphs/*/extraction_summary.json; do
+            if [ -f "$summary_file" ]; then
+              source_file=$(jq -r '.source_file' "$summary_file")
+              total_paragraphs=$(jq -r '.total_paragraphs' "$summary_file")
+              echo "- **$source_file**: $total_paragraphs paragraphs extracted" >> extraction_report.md
+            fi
+          done
+          
+          echo "" >> extraction_report.md
+          echo "## Directory Structure" >> extraction_report.md
+          echo '```' >> extraction_report.md
+          find extracted_paragraphs -type f -name "*.json" | head -20 >> extraction_report.md
+          if [ $(find extracted_paragraphs -type f -name "*.json" | wc -l) -gt 20 ]; then
+            echo "... and more files" >> extraction_report.md
+          fi
+          echo '```' >> extraction_report.md
+        else
+          echo "No paragraphs were extracted." >> extraction_report.md
+        fi
+    
+    - name: Upload extraction results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: oecd-tpg-paragraphs-${{ github.run_number }}
+        path: |
+          extracted_paragraphs/
+          extraction_report.md
+        retention-days: 90
+    
+    - name: Commit extracted paragraphs
+      if: github.event_name != 'pull_request'
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        if [ -d "extracted_paragraphs" ]; then
+          git add extracted_paragraphs/
+          git add extraction_report.md
+          
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Auto-extract OECD TPG paragraphs from PDF(s)
+            
+            - Processed: ${{ steps.find-pdfs.outputs.pdf_files }}
+            - Generated individual JSON files for each paragraph
+            - Ready for manual title and explanation addition"
+            
+            git push
+            echo "Committed extracted paragraphs to repository"
+          fi
+        fi
+    
+    - name: Comment on PR (if applicable)
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          
+          if (fs.existsSync('extraction_report.md')) {
+            const report = fs.readFileSync('extraction_report.md', 'utf8');
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 📄 OECD TPG Paragraph Extraction Results\n\n${report}\n\n---\n*Extraction artifacts are available for download from the workflow run.*`
+            });
+          }
